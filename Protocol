@@ -1,0 +1,39 @@
+# GXFP5120 Protocol Dump
+#  (revision #4)
+
+Host    Unknown (?)                     Goodix pack                         Packet                                End Of Transmission
+>20     cc f2 3b 82                     a0 09 00 a9                         ae 06 00 [55 0e 52 00 00] 41          00 00
+        ~~~~~~~~~~~                     ~~~~~~~~~~~                         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~          ~~~~~
+              |                         |  |     |                          |  |     |                |           (optional)
+              sequence# (+1 each req)   |  |     checksum = a0+09+00        |  |     |                checksum*
+                                        |  |                                |  |     |
+        (rest is static: cc f2 xx 82)   |  length* = 9                      |  |     payload (5 bytes)
+                                        |                                   |  |
+                                        flags = GOODIX_FLAGS_MSG_PROTOCOL   |  length* = 6
+                                                                            |
+                                                                            pid = GOODIX_CMD_QUERY_MCU_STATE
+
+
+Host    RTR signal (?)       End Of Transmission
+>4      bb f1                00 00
+        ~~~~~~~~~~~          ~~~~~
+        (ready to receive)   (optional)
+
+
+Slave   Goodix pack                         Packet
+<256    a0 18 00 b8                         ae 15 00 [02 02 31 00 00 00 01 00 90 63 00 00 00 00 00 00 00 00 19 19] 8c
+        ~~~~~~~~~~~                         ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+        |  |     |                          |  |     |                                                             |
+        |  |     checksum = a0+18+00        |  |     payload (20 bytes)                                            checksum*
+        |  |                                |  |
+        |  length* = 24                     |  length* = 21
+        |                                   |
+        flags = GOODIX_FLAGS_MSG_PROTOCOL   pid = GOODIX_CMD_QUERY_MCU_STATE (answer)
+
+
+# `length*' means it matches the size of corresponding payload data
+# `checksum*' means verified with `calc_checksum()' and is correct
+
+
+# by Sdore, 2021
+# https://sdore.me
