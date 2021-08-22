@@ -2,18 +2,18 @@
 # Goodix SPI Protocol Parser
 
 from __future__ import annotations
-import abc, sys, math, struct
+import abc, sys, math, time, random, spidev, struct, itertools
 
 def indent(s): return '\n\t'.join(s.split('\n'))
 def hexdump(x): return ' '.join(f"{i:02x}" for i in x) or "b''"
 
-class Flags:
-	MSG_PROTOCOL = 0xa0
+MCU_CONFIG_GXFP5120 = bytes.fromhex('84 90 e1 00 70 11 60 71 00 71 2c 9d 1c b9 18 d1 00 d1 00 d1 00 ba 00 01 80 ca 00 04 00 84 00 15 b3 86 00 00 c4 88 00 00 ba 8a 00 00 b2 8c 00 00 aa 8e 00 00 c1 90 00 bb bb 92 00 b1 b1 94 00 00 a8 96 00 00 b6 98 00 00 00 9a 00 00 00 d2 00 00 00 d4 00 00 00 d6 00 00 00 d8 00 00 00 50 00 01 05 d0 00 00 00 70 00 00 00 72 00 78 56 74 00 34 12 20 00 10 40 2a 01 82 03 22 00 01 20 24 00 14 00 80 00 01 00 5c 00 00 01 56 00 04 20 58 00 03 02 32 00 0c 02 66 00 03 00 7c 00 00 58 82 00 80 1b 2a 01 08 00 5c 00 80 00 54 00 10 01 62 00 04 03 64 00 19 00 66 00 03 00 7c 00 00 58 2a 01 08 00 5c 00 00 01 52 00 08 00 54 00 00 01 66 00 03 00 7c 00 00 58 00 00 00 00 00 00 00 00 00 00 00 00 00 72 15 8f')
 
 class Repr:
 	@staticmethod
 	def repr(x):
-		if (isinstance(x, int)): return f"{x:#04x}\033[0m  \033[3;90m# {x:d} / 0b{int(bin(x)[2:]):08d}\033[0m"
+		if (isinstance(x, bool)): return str(x)
+		elif (isinstance(x, int)): return f"{x:#04x}\033[0m  \033[3;90m# {x:d} / 0b{int(bin(x)[2:]):08d}\033[0m"
 		elif (isinstance(x, bytes)): return hexdump(x)
 		else: return str(x)
 
@@ -34,8 +34,8 @@ class Packable(Validatable, Repr):
 	def __str__(self):
 		ml = max(map(len, self.all_fields), default=0)
 		_args = self._args
-		args = (' \033[2m(\033[0;95m'+f"\033[0;2m,\033[0m \033[95m".join(_args)+'\033[0;2m)\033[0m' if (_args) else '')
-		return f"\033[1;94m{self.__class__.__name__}\033[0m{args}"+' {\n\t'+('\n\t'.join(f"\033[93m{i}\033[0m{' '*(ml-len(i))} = \033[96m{indent(self.repr(getattr(self, i)))}\033[0m" for i in self.all_fields if not i.startswith('_')) or '\033[3;90m# empty\033[0m')+'\n}'+f"  \033[2;3;90m# {hexdump(self.pack())}\033[0m"
+		args = ('  \033[2m# (\033[0;95m'+f"\033[0;2m,\033[0m \033[95m".join(_args)+'\033[0;2m)\033[0m' if (_args) else '')
+		return f"\033[1;94m{self.__class__.__name__}\033[0m {{{args}\n\t"+('\n\t'.join(f"\033[93m{i}\033[0m{' '*(ml-len(i))} = \033[96m{indent(self.repr(getattr(self, i)))}\033[0m" for i in self.all_fields if not i.startswith('_') and getattr(self, i, None) != b'') or '\033[3;90m# empty\033[0m')+'\n}'+f"  \033[2;3;90m# {hexdump(self.pack())}\033[0m"
 
 	@property
 	def _args(self):
@@ -147,6 +147,9 @@ class Package(Packable, Validatable, abc.ABC):
 		return self.__slots__
 
 class ProtocolPackage(Package):
+	class Flags:
+		MSG_PROTOCOL = 0xa0
+
 	__slots__ = ('flags', 'payload')
 
 	def __init__(self, flags: int, payload: Payload):
@@ -214,10 +217,13 @@ class _PacketPayloadMeta(abc.ABCMeta):
 		class Payload(Packable):
 			__slots__ = tuple(i for i in _fields if i not in ('payload', 'leftover', 'checksum'))
 			fmt = cls.fmt
-			fields = ()
+			fields = __slots__
 
 			def __init__(self, *args):
-				for k, v in zip(self.__slots__, args):
+				for k, v in itertools.zip_longest(self.__slots__, args):
+					if (v is None):
+						if (not k.startswith('_')): raise TypeError(f"Value for {k} is needed")
+						else: v = int(k.split('_')[-1])
 					setattr(self, k, v)
 
 			def pack(self):
@@ -237,7 +243,8 @@ class Packet(Packable, ChecksumValidatable, metaclass=_PacketPayloadMeta):
 	fmt: str = ''
 	fields: tuple = (*__slots__, 'checksum')
 
-	def __init__(self, pid: int, payload, leftover: bytes = b'', checksum: int = None):
+	def __init__(self, pid: int = None, payload = None, leftover: bytes = b'', checksum: int = None):
+		assert (payload is not None)
 		self.payload, self.leftover = payload, leftover
 		super().__init__()
 		self.validate(pid=pid, checksum=checksum)
@@ -272,10 +279,14 @@ class Packet(Packable, ChecksumValidatable, metaclass=_PacketPayloadMeta):
 		checksum, data = struct.unpack_from('<B', data)[0], data[struct.calcsize('<B'):]
 		return (cls(pid, cls.Payload(*struct.unpack_from('<'+cls.fmt, payload)), payload[struct.calcsize('<'+cls.fmt):], checksum), data)
 
+	@classmethod
+	def new(cls, *args, **kwargs):
+		return cls(payload=cls.Payload(*args), **kwargs)
+
 class PacketNop(Packet):
 	pid = 0x00
 	fmt = 'I'
-	fields = ('unknown',)
+	fields = ('_unk_0',)
 
 class PacketGetImage(Packet):
 	pid = 0x20
@@ -302,13 +313,115 @@ class PacketNav0(Packet):
 	fmt = ''
 	fields = ()
 
-class PacketQueryMcuState(Packet):
+class PacketSwitchToIdleMode(Packet):  #9 (14 00 23), read x1
+	pid = 0x70
+	fmt = 'BB'
+	fields = ('sleep_time', '_unk_') # XXX
+
+class PacketWriteSensorRegister(Packet):
+	pid = 0x80
+	fmt = 'BHH'
+	fields = ('multiples', 'address', 'value')
+
+class PacketReadSensorRegister(Packet):  #6 (00 00 00 04 00), read x2
+	pid = 0x82
+	fmt = 'BHBB'
+	fields = ('multiples', 'address', 'length', '_unk_0')
+
+class PacketUploadConfigMcu(Packet):  #11 (224 bytes, MCU_CONFIG_GXFP5120), read x2
+	pid = 0x90
+	fmt = ''
+	fields = ()
+
+class PacketSetPowerdownScanFrequency(Packet):
+	pid = 0x94
+	fmt = 'H'
+	fields = ('powerdown_scan_frequency',)
+
+class PacketEnableChip(Packet):  #1 (01 01), no read
+	pid = 0x96
+	fmt = '?B'
+	fields = ('enable', '_unk_1')
+
+class PacketUnknown(Packet):  #10 (e8 0b c0 00 be 00 be 00), read x2
+	pid = 0x98
+
+class PacketReset(Packet):  #5 (14 f0 00), read x2,
+                            #8 (01 14 f0), read x2
+	class Flags:
+		SOFT_RESET_MCU = (1 << 0)
+		RESET_SENSOR = (1 << 1)
+
+	pid = 0xa2
+	fmt = 'BB'
+	fields = ('flags', 'sleep_time')
+
+class PacketMcuEraseApp(Packet):
+	pid = 0xa4
+	fmt = ''
+	fields = ()
+
+class PacketReadOtp(Packet):  #7 (00 00 01), read x2
+	pid = 0xa6
+	fmt = ''
+	fields = ()
+
+class PacketFirmwareVersion(Packet):  #2 (00 00), read x2
+	pid = 0xa8
+	fmt = 'H'
+	fields = ('_unk_0',)
+
+class PacketQueryMcuState(Packet):  #3 (55 15 a0 00 00), read x1
 	pid = 0xae
 	fmt = 'B'
-	fields = ('unused_flags',)
+	fields = ('flags',)
 
 class PacketAck(Packet):
+	class Flags:
+		ALWAYS_TRUE = (1 << 0)
+		HAS_NO_CONFIG = (1 << 1)
+
 	pid = 0xb0
+	fmt = 'BB'
+	fields = ('cmd', 'flags')
+
+class PacketRequestTlsConnection(Packet):  #12 (00 00 d7), read x1
+	pid = 0xd0
+	fmt = ''
+	fields = ()
+
+class PacketTlsSuccessfullyEstablished(Packet):
+	pid = 0xd4
+	fmt = ''
+	fields = ()
+
+class PacketPresetPskWriteR(Packet):
+	pid = 0xe0
+	fmt = 'II'
+	fields = ('flags', 'length')
+
+class PacketPresetPskReadR(Packet):  #4 (03 00 02 bb 00 00 00 00), read x2
+	pid = 0xe4
+	fmt = 'II'
+	fields = ('flags', 'length')
+
+class PacketWriteFirmware(Packet):
+	pid = 0xf0
+	fmt = ''
+	fields = ()
+
+class PacketReadFirmware(Packet):
+	pid = 0xf2
+	fmt = ''
+	fields = ()
+
+class PacketCheckFirmware(Packet):
+	pid = 0xf4
+	fmt = ''
+	fields = ()
+
+class PacketGetIapVersion(Packet):
+	pid = 0xf6
 	fmt = ''
 	fields = ()
 
@@ -344,8 +457,7 @@ def decode_dump(hex, *, errors=True, last=0):
 		print(f"\033[1;2mLeftover\033[0m \033[1;90m(\033[0;2;95m{len(leftover)} bytes\033[0;1;90m)\033[0m \033[2m{{\033[0;2m\n\t"+'\n\t'.join(' '.join(f"{j:02x}" for j in leftover[i*8:(i+1)*8-4])+'  '+' '.join(f"{j:02x}" for j in leftover[i*8+4:(i+1)*8]) for i in range(math.ceil(len(leftover)/8)))+'\n\033[2m}\033[0m')
 	print()
 
-
-if (__name__ == '__main__'):
+def run_decode_read():
 	for i in (
 		'> cc f2 3b 82 a0 09 00 a9 ae 06 00 55 0e 52 00 00 41',
 		'> bb f1 00 00',
@@ -441,6 +553,81 @@ if (__name__ == '__main__'):
 
 		'> cc f2 92 23 a0 09 00 a9 ae 06 00 55 db 53 00 00 73',
 	): decode_dump(i, errors=False)
+
+
+class SPIDev(spidev.SpiDev):
+	__slots__ = ('_seq',)
+
+	def __init__(self, *args, **kwargs):
+		super().__init__(*args, **kwargs)
+		self._seq = random.randrange(0x10000)
+
+	@staticmethod
+	def log_in(p):
+		print(f"\033[91m<\033[0m {p}\n")
+
+	@staticmethod
+	def log_out(p):
+		print(f"\033[92m>\033[0m {p}\n")
+
+	def seq(self):
+		seq = self._seq
+		self._seq = (seq+1) % 0x10000
+		return seq
+
+	def send_package(self, package, *, nolog=False):
+		if (not nolog): self.log_out(package)
+		r = SPIPackage(self.seq(), package).pack()
+		return self.writebytes(r.ljust(math.ceil(len(r)/64)*64, b'\0'))
+
+	def send_rtr(self, *, nolog=False):
+		rtr = RTRMessage()
+		if (not nolog): self.log_out(rtr)
+		return self.writebytes(rtr.pack())
+
+	def send_protocol(self, flags, packet, **kwargs):
+		return self.send_package(ProtocolPackage(flags, packet), **kwargs)
+
+	def send_packet(self, packet, **kwargs):
+		return self.send_protocol(ProtocolPackage.Flags.MSG_PROTOCOL, packet, **kwargs)
+
+	def send_packet_tls(self, packet, **kwargs):
+		return self.send_protocol(ProtocolPackage.Flags.MSG_TLS, packet, **kwargs)
+
+	def receive_protocol(self, *, nolog=False):
+		self.send_rtr(nolog=nolog)
+
+		while (True):
+			r = bytes(self.readbytes(256))
+			if (not r.rstrip(b'\0')): time.sleep(0.001); continue
+			p = ProtocolPackage.unpack(r)
+			if (not nolog): self.log_in(p)
+			return p
+
+	def communicate(self, packet, *, read=0):
+		self.send_packet(packet)
+
+		res = list()
+		for i in range(read):
+			try: res.append(self.receive_protocol())
+			except Exception as ex: raise #res.append(ex)
+		return res
+
+def run_communicate_init():
+	spi = SPIDev(0, 0)
+	#spi.cshigh = False
+	spi.bits_per_word = 8
+	spi.max_speed_hz = 10000000
+	spi.mode = 0b00
+
+	#spi.communicate(PacketNop.new())
+	spi.communicate(PacketEnableChip.new(True))
+	#spi.communicate(PacketNop.new())
+	spi.communicate(PacketFirmwareVersion.new(), read=2)
+
+if (__name__ == '__main__'):
+	#run_decode_read()
+	run_communicate_init()
 
 # by Sdore, 2021
 # www.sdore.me

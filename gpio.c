@@ -38,6 +38,12 @@ int main() {
 		return -1;
 	}
 
+	req = gpiod_line_set_value(line, 1);
+	if (req) {
+		gpiod_chip_close(chip);
+		return -1;
+	}
+
 	/*req = gpiod_line_request_input(line, "gpio_state");
 	if (req) {
 		gpiod_chip_close(chip);
