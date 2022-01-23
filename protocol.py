@@ -263,11 +263,12 @@ class Packet(Packable, ChecksumValidatable, metaclass=_PacketPayloadMeta):
 	def pack(self, *, checksum=True):
 		payload = bytearray(self.payload.pack() + self.leftover)
 		if (checksum): payload.append(self.checksum)
-		return struct.pack('<BH', self.pid, len(payload)+1) + payload
+		return struct.pack('<BH', self.pid, len(payload)) + payload
 
 	@property
 	def checksum(self):
-		return ((0xaa - (sum(self.pack(checksum=False)) % 256)) % 256)
+		if (self.pid == 0x00): return 0x88  # NOP has a fixed non-standard checksum
+		return ((0xaa - ((sum(self.pack(checksum=False))+1) % 256)) % 256)
 
 	@classmethod
 	def unpack(cls, data):
@@ -562,6 +563,11 @@ class SPIDev(spidev.SpiDev):
 		super().__init__(*args, **kwargs)
 		self._seq = random.randrange(0x10000)
 
+	def writebytes(self, r, nolog=False):
+		#r = r.ljust(math.ceil(len(r)/4)*4, b'\0')
+		if (not nolog): print(f"\033[2mwrite({len(r)}):", hexdump(r), end='\033[0m\n\n', file=sys.stderr)
+		return super().writebytes(r)
+
 	@staticmethod
 	def log_in(p):
 		print(f"\033[91m<\033[0m {p}\n")
@@ -577,13 +583,13 @@ class SPIDev(spidev.SpiDev):
 
 	def send_package(self, package, *, nolog=False):
 		if (not nolog): self.log_out(package)
-		r = SPIPackage(self.seq(), package).pack()
-		return self.writebytes(r.ljust(math.ceil(len(r)/64)*64, b'\0'))
+		return self.writebytes(SPIPackage(self.seq(), package).pack(), nolog=nolog)
+		#return self.writebytes(package.pack(), nolog=nolog)
 
 	def send_rtr(self, *, nolog=False):
 		rtr = RTRMessage()
 		if (not nolog): self.log_out(rtr)
-		return self.writebytes(rtr.pack())
+		return self.writebytes(rtr.pack(), nolog=nolog)
 
 	def send_protocol(self, flags, packet, **kwargs):
 		return self.send_package(ProtocolPackage(flags, packet), **kwargs)
@@ -620,9 +626,9 @@ def run_communicate_init():
 	spi.max_speed_hz = 10000000
 	spi.mode = 0b00
 
-	#spi.communicate(PacketNop.new())
-	spi.communicate(PacketEnableChip.new(True))
-	#spi.communicate(PacketNop.new())
+	spi.communicate(PacketNop.new())
+	spi.communicate(PacketEnableChip.new(True), read=1)
+	spi.communicate(PacketNop.new())
 	spi.communicate(PacketFirmwareVersion.new(), read=2)
 
 if (__name__ == '__main__'):

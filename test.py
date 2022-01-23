@@ -42,7 +42,10 @@ if (__name__ == '__main__'):
 	#	print(bytes(spi.readbytes(65535)))
 	#	time.sleep(0.001)
 
-	xfer(bytes.fromhex('cc f2 00 00   a0 06 00 a6   00 03 00 00 00 a7   00 00'), recv=False)
+	#xfer(bytes.fromhex('cc f2 3b 82   a0 06 00 a6  96 03 00 01 02 0e   00 00'), recv=False)
+	#xfer(bytes.fromhex('cc f2 3c 82   a0 06 00 a6  a8 03 00 00 00 ff   00 00'), recv=False)
+
+	#xfer(bytes.fromhex('cc f2 00 00   a0 06 00 a6   00 03 00 00 00 a7   00 00'), recv=False)
 	#xfer(bytes.fromhex('a0 06 00 a6   00 03 00 00 00 a7   00 00'))
 	#for i in range(256):
 	#xfer(bytes.fromhex('cc f2 01 ae   a0 09 00 a9   ae 06 00 55 0e 52 00 00 41   00 00 00'), recv=False)
@@ -54,7 +57,7 @@ if (__name__ == '__main__'):
 	#xfer(bytes.fromhex('cc f2 b6 ae   a0 12 00 b2   34 0f 00 0e 01 80 98 80 be 80 83 80 92 80 84 80 9d cc   00 00'), recv=False)
 	#xfer(bytes.fromhex('cc f2 05 ae   a0 06 00 a6   a8 03 00 00 00 ff   00 00'), recv=False)
 
-	xfer(RTRMessage().pack())
+	#xfer(RTRMessage().pack())
 
 	'''
 	xfer(SPIPackage(seq,

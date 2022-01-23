@@ -2,13 +2,14 @@
 
 import time, periphery
 
-reset = periphery.CdevGPIO('/dev/gpiochip0', 8, 'out', bias='pull_up')
-#reset = periphery.CdevGPIO('/dev/gpiochip0', 0x5E, 'out', bias='pull_up')
-#reset = periphery.CdevGPIO('/dev/gpiochip0', 11, 'out')
-print(reset.name)
-for i in (1, 0, 1, 0, 1, 0, 1):
-	reset.write(bool(i))
-	time.sleep(0.1)
+for pin in (8, 3+8, 0x58, 152+8, 0x105):
+	print(pin, end=': ')
+	reset = periphery.CdevGPIO('/dev/gpiochip0', pin, 'out', bias='pull_up')
+	print(reset.name)
+	for i in (0, 1):
+		reset.write(bool(i))
+		time.sleep(0.03)
+	reset.close()
 
 exit()  # XXX
 
